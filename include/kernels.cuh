@@ -1,6 +1,6 @@
 #pragma once
 
-#define TILE 16
+#define TILE 32
 
 // Memory kernels
 __global__ void sequential(float *a, float *out, int N);
