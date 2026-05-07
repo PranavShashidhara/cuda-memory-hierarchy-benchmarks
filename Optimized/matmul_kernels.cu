@@ -1,7 +1,8 @@
 #include "kernels.cuh"
+#include <cuda_pipeline.h>   // __pipeline_memcpy_async, commit, wait_prior
 
 // ============================================================================
-// NAIVE: Unrolled with #pragma unroll — compiler handles ILP
+// NAIVE: baseline, #pragma unroll 8 for ILP
 // ============================================================================
 __global__ void matmul_naive(float *A, float *B, float *C, int n) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -16,28 +17,29 @@ __global__ void matmul_naive(float *A, float *B, float *C, int n) {
 }
 
 // ============================================================================
-// TILED: 32x32 shared memory tile, +1 padding to eliminate bank conflicts
-// Block = 32x32 threads, Grid = (n/32) x (n/32)
+// TILED V1: shared memory tile, bank-conflict-free (+1 pad)
+// Block = TILE_DIM x TILE_DIM
 // ============================================================================
 __global__ void matmul_tiled(float *A, float *B, float *C, int n) {
     __shared__ float sA[TILE_DIM][TILE_DIM + 1];
     __shared__ float sB[TILE_DIM][TILE_DIM + 1];
 
-    int row = blockIdx.y * TILE_DIM + threadIdx.y;
-    int col = blockIdx.x * TILE_DIM + threadIdx.x;
+    int ty = threadIdx.y, tx = threadIdx.x;
+    int row = blockIdx.y * TILE_DIM + ty;
+    int col = blockIdx.x * TILE_DIM + tx;
     float sum = 0.0f;
 
     for (int t = 0; t < (n + TILE_DIM - 1) / TILE_DIM; t++) {
-        int tA_col = t * TILE_DIM + threadIdx.x;
-        int tB_row = t * TILE_DIM + threadIdx.y;
+        int tA_col = t * TILE_DIM + tx;
+        int tB_row = t * TILE_DIM + ty;
 
-        sA[threadIdx.y][threadIdx.x] = (row < n && tA_col < n) ? A[row * n + tA_col] : 0.f;
-        sB[threadIdx.y][threadIdx.x] = (tB_row < n && col < n) ? B[tB_row * n + col] : 0.f;
+        sA[ty][tx] = (row < n && tA_col < n) ? A[row * n + tA_col] : 0.f;
+        sB[ty][tx] = (tB_row < n && col < n) ? B[tB_row * n + col] : 0.f;
         __syncthreads();
 
         #pragma unroll
         for (int k = 0; k < TILE_DIM; k++)
-            sum += sA[threadIdx.y][k] * sB[k][threadIdx.x];
+            sum += sA[ty][k] * sB[k][tx];
         __syncthreads();
     }
 
@@ -46,66 +48,55 @@ __global__ void matmul_tiled(float *A, float *B, float *C, int n) {
 }
 
 // ============================================================================
-// THREAD COARSENING (TILED V2): Each thread computes a WPT x WPT tile
-// of output using register blocking. Reduces redundant shared memory loads
-// and dramatically increases arithmetic intensity per memory transaction.
-//
-// Block = (TILE_DIM/WPT) x (TILE_DIM/WPT) threads
-// Each thread owns WPT rows and WPT cols of the output tile.
-// WPT=4 → each thread computes 4x4=16 output values, 16x more work per load.
+// TILED V2: Thread coarsening WPT x WPT register blocking
+// Each thread accumulates WPT*WPT outputs in registers — never spills to smem.
+// Reads each smem element WPT times across the acc loop, maximizing L1 reuse.
+// Block = RTS x RTS (= TILE_DIM/WPT each dim)
 // ============================================================================
-#define WPT 4   // Work per thread (tile side)
-#define RTS (TILE_DIM / WPT)  // = 8 threads per tile dim
-
 __global__ void matmul_tiled_v2(float *A, float *B, float *C, int n) {
     __shared__ float sA[TILE_DIM][TILE_DIM + 1];
     __shared__ float sB[TILE_DIM][TILE_DIM + 1];
 
-    int tid_row = threadIdx.y;  // 0..RTS-1
-    int tid_col = threadIdx.x;  // 0..RTS-1
+    int ty = threadIdx.y, tx = threadIdx.x;
+    int base_row = blockIdx.y * TILE_DIM + ty * WPT;
+    int base_col = blockIdx.x * TILE_DIM + tx * WPT;
 
-    int base_row = blockIdx.y * TILE_DIM + tid_row * WPT;
-    int base_col = blockIdx.x * TILE_DIM + tid_col * WPT;
-
-    float acc[WPT][WPT] = {};  // WPT x WPT register accumulator, zero-init
+    float acc[WPT][WPT] = {};
 
     int num_tiles = (n + TILE_DIM - 1) / TILE_DIM;
 
     for (int t = 0; t < num_tiles; t++) {
-        // Each thread loads WPT elements of A and WPT elements of B into smem
+        // Each thread loads WPT rows of A and WPT cols of B
         #pragma unroll
         for (int w = 0; w < WPT; w++) {
-            int A_row = base_row + w;
-            int A_col = t * TILE_DIM + tid_col;
-            sA[tid_row * WPT + w][tid_col] =
-                (A_row < n && A_col < n) ? A[A_row * n + A_col] : 0.f;
+            int A_row = base_row + w,  A_col = t * TILE_DIM + tx;
+            int B_row = t * TILE_DIM + ty, B_col = base_col + w;
 
-            int B_row = t * TILE_DIM + tid_row;
-            int B_col = base_col + w;
-            sB[tid_row][tid_col * WPT + w] =
-                (B_row < n && B_col < n) ? B[B_row * n + B_col] : 0.f;
+            sA[ty * WPT + w][tx] = (A_row < n && A_col < n) ? A[A_row * n + A_col] : 0.f;
+            sB[ty][tx * WPT + w] = (B_row < n && B_col < n) ? B[B_row * n + B_col] : 0.f;
         }
         __syncthreads();
 
-        // Compute WPT x WPT output block from tile
+        // Register-cache rows of sA and cols of sB before the inner loop.
+        // This keeps values in RF across all WPT*WPT MACs, so smem is read
+        // once per k and each value is reused WPT times — boosting L1 hits.
         #pragma unroll
         for (int k = 0; k < TILE_DIM; k++) {
-            float a_regs[WPT], b_regs[WPT];
+            float a_reg[WPT], b_reg[WPT];
             #pragma unroll
             for (int w = 0; w < WPT; w++) {
-                a_regs[w] = sA[tid_row * WPT + w][k];
-                b_regs[w] = sB[k][tid_col * WPT + w];
+                a_reg[w] = sA[ty * WPT + w][k];   // row w, col k  → stays in RF
+                b_reg[w] = sB[k][tx * WPT + w];   // row k, col w  → stays in RF
             }
             #pragma unroll
             for (int wi = 0; wi < WPT; wi++)
                 #pragma unroll
                 for (int wj = 0; wj < WPT; wj++)
-                    acc[wi][wj] += a_regs[wi] * b_regs[wj];
+                    acc[wi][wj] += a_reg[wi] * b_reg[wj];
         }
         __syncthreads();
     }
 
-    // Write WPT x WPT results
     #pragma unroll
     for (int wi = 0; wi < WPT; wi++)
         #pragma unroll
@@ -117,50 +108,106 @@ __global__ void matmul_tiled_v2(float *A, float *B, float *C, int n) {
 }
 
 // ============================================================================
-// DOUBLE-BUFFERED TILED V3: Proper async prefetch using two smem buffers
-// While computing tile t, loads tile t+1 into the other buffer.
-// Hides global memory latency behind compute — true pipelining.
+// TILED V3: cp.async double-buffered pipeline + WPT register blocking
+//
+// Key ideas:
+//   1. cp.async copies global → shared DIRECTLY, bypassing registers.
+//      The thread issues the copy and moves on — zero stall on LDG.
+//   2. Double buffer: while computing tile t from buf[cur],
+//      cp.async is already filling buf[nxt] with tile t+1.
+//   3. __pipeline_wait_prior(1): wait until all but the most recent
+//      in-flight copy is done — ensures cur buffer is safe to read
+//      WITHOUT waiting for the nxt buffer copy to finish.
+//   4. Register blocking (WPT x WPT) same as v2 — maximizes L1 reuse
+//      of shared memory data once it lands.
+//
+// Block = RTS x RTS, Grid = (n/TILE_DIM) x (n/TILE_DIM)
 // ============================================================================
 __global__ void matmul_tiled_v3(float *A, float *B, float *C, int n) {
-    // Two buffers, index alternates each tile
+    // Double-buffered shared memory — 2 x (TILE_DIM x (TILE_DIM+1)) floats each
     __shared__ float sA[2][TILE_DIM][TILE_DIM + 1];
     __shared__ float sB[2][TILE_DIM][TILE_DIM + 1];
 
-    int ty  = threadIdx.y, tx = threadIdx.x;
-    int row = blockIdx.y * TILE_DIM + ty;
-    int col = blockIdx.x * TILE_DIM + tx;
-    float sum = 0.0f;
+    int ty = threadIdx.y, tx = threadIdx.x;
+    int base_row = blockIdx.y * TILE_DIM + ty * WPT;
+    int base_col = blockIdx.x * TILE_DIM + tx * WPT;
 
+    float acc[WPT][WPT] = {};
     int num_tiles = (n + TILE_DIM - 1) / TILE_DIM;
 
-    // Load tile 0 into buffer 0
-    {
-        int tA_col = tx, tB_row = ty;
-        sA[0][ty][tx] = (row < n && tA_col < n) ? A[row * n + tA_col] : 0.f;
-        sB[0][ty][tx] = (tB_row < n && col < n) ? B[tB_row * n + col] : 0.f;
-    }
-    __syncthreads();
+    // ── Prologue: async-load tile 0 into buffer 0 ──────────────────────────
+    #pragma unroll
+    for (int w = 0; w < WPT; w++) {
+        int A_row = base_row + w,  A_col = tx;           // tile 0 col = tx
+        int B_row = ty,            B_col = base_col + w; // tile 0 row = ty
 
+        // cp.async: 4 bytes, global → shared, no register touch
+        __pipeline_memcpy_async(
+            &sA[0][ty * WPT + w][tx],
+            (A_row < n && A_col < n) ? &A[A_row * n + A_col] : nullptr,
+            sizeof(float));
+        __pipeline_memcpy_async(
+            &sB[0][ty][tx * WPT + w],
+            (B_row < n && B_col < n) ? &B[B_row * n + B_col] : nullptr,
+            sizeof(float));
+    }
+    __pipeline_commit();  // seal group 0
+
+    // ── Main loop ──────────────────────────────────────────────────────────
     for (int t = 0; t < num_tiles; t++) {
         int cur = t & 1;
         int nxt = 1 - cur;
 
-        // Prefetch tile t+1 into the next buffer while computing tile t
+        // Async-load tile t+1 into nxt buffer BEFORE waiting on cur
         if (t + 1 < num_tiles) {
-            int nA_col = (t + 1) * TILE_DIM + tx;
-            int nB_row = (t + 1) * TILE_DIM + ty;
-            sA[nxt][ty][tx] = (row < n && nA_col < n) ? A[row * n + nA_col] : 0.f;
-            sB[nxt][ty][tx] = (nB_row < n && col < n) ? B[nB_row * n + col] : 0.f;
+            int base_k = (t + 1) * TILE_DIM;
+            #pragma unroll
+            for (int w = 0; w < WPT; w++) {
+                int A_row = base_row + w,  A_col = base_k + tx;
+                int B_row = base_k + ty,   B_col = base_col + w;
+
+                __pipeline_memcpy_async(
+                    &sA[nxt][ty * WPT + w][tx],
+                    (A_row < n && A_col < n) ? &A[A_row * n + A_col] : nullptr,
+                    sizeof(float));
+                __pipeline_memcpy_async(
+                    &sB[nxt][ty][tx * WPT + w],
+                    (B_row < n && B_col < n) ? &B[B_row * n + B_col] : nullptr,
+                    sizeof(float));
+            }
+            __pipeline_commit();  // seal group t+1
         }
 
-        // Compute from current buffer
-        #pragma unroll
-        for (int k = 0; k < TILE_DIM; k++)
-            sum += sA[cur][ty][k] * sB[cur][k][tx];
+        // Wait for tile t's group (all but the most recent in-flight copy)
+        // This unblocks as soon as cur is ready, not waiting for nxt.
+        __pipeline_wait_prior(1);
+        __syncthreads();  // all threads must see cur buffer before computing
 
-        __syncthreads();  // ensure prefetch writes complete before next iter
+        // Compute tile t from cur buffer — register-cached for L1 reuse
+        #pragma unroll
+        for (int k = 0; k < TILE_DIM; k++) {
+            float a_reg[WPT], b_reg[WPT];
+            #pragma unroll
+            for (int w = 0; w < WPT; w++) {
+                a_reg[w] = sA[cur][ty * WPT + w][k];
+                b_reg[w] = sB[cur][k][tx * WPT + w];
+            }
+            #pragma unroll
+            for (int wi = 0; wi < WPT; wi++)
+                #pragma unroll
+                for (int wj = 0; wj < WPT; wj++)
+                    acc[wi][wj] += a_reg[wi] * b_reg[wj];
+        }
+        __syncthreads();  // done with cur buffer before nxt group overwrites it
     }
 
-    if (row < n && col < n)
-        C[row * n + col] = sum;
+    // ── Epilogue: write results ─────────────────────────────────────────────
+    #pragma unroll
+    for (int wi = 0; wi < WPT; wi++)
+        #pragma unroll
+        for (int wj = 0; wj < WPT; wj++) {
+            int r = base_row + wi, c = base_col + wj;
+            if (r < n && c < n)
+                C[r * n + c] = acc[wi][wj];
+        }
 }
