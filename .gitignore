@@ -1,0 +1,49 @@
+# =========================
+# Build output
+# =========================
+cuda_bench
+*.out
+*.o
+*.obj
+*.exe
+
+# =========================
+# CUDA / NVCC temporary files
+# =========================
+*.ptx
+*.cubin
+*.fatbin
+*.nvcc*
+
+# =========================
+# Debug / profiling outputs
+# =========================
+*.nsys-rep
+*.sqlite
+*.ncu-rep
+*.nvvp
+*.log
+
+# Nsight Systems / Compute reports
+nsys-*
+ncu-*
+
+# =========================
+# System / OS junk
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# IDEs / editors
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# Linux temporary files
+# =========================
+*~build/
+results/

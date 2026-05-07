@@ -1,51 +1,161 @@
-NVCC        = nvcc
-NCU         = /usr/local/cuda-12.6/bin/ncu
-NVCCFLAGS   = -std=c++17 -arch=sm_87 -diag-suppress 177
-OPT_FLAGS   = -O3 -use_fast_math
-DEBUG_FLAGS = -G -g
+# ─────────────────────────────────────────────────────────────────────────────
+#  Makefile — CUDA Benchmark Suite
+#  Target : Jetson Orin Nano (Ampere sm_87)
+# ─────────────────────────────────────────────────────────────────────────────
 
-SRC_DIR     = src
-KERNEL_DIR  = kernels
-INC_DIR     = include
-OPT_DIR     = Optimized
-BUILD_DIR   = build
-OPT_BUILD   = build/optimized
+NVCC := nvcc
+CXX  := g++
 
-TARGET      = cuda_bench
-OPT_TARGET  = cuda_bench_opt
+# ─────────────────────────────────────────────────────────────────────────────
+#  Shared compiler flags
+# ─────────────────────────────────────────────────────────────────────────────
 
-SRCS        = $(SRC_DIR)/main.cu $(SRC_DIR)/utils.cu \
-              $(KERNEL_DIR)/matmul_kernels.cu $(KERNEL_DIR)/memory_kernels.cu
+COMMON_FLAGS := -arch=sm_87 \
+                -O3 \
+                --use_fast_math \
+                --ptxas-options=-v \
+                --expt-relaxed-constexpr \
+                -std=c++17 \
+                -lineinfo
 
-OPT_SRCS    = $(OPT_DIR)/main.cu \
-              $(OPT_DIR)/matmul_kernels.cu $(OPT_DIR)/memory_kernels.cu
+# ─────────────────────────────────────────────────────────────────────────────
+#  Original build
+# ─────────────────────────────────────────────────────────────────────────────
 
-.PHONY: all build optimized run run-opt profile profile-nsys clean
+ORIG_TARGET := cuda_bench
 
-all: build optimized
+ORIG_FLAGS := $(COMMON_FLAGS) \
+              -Iinclude
 
-build: $(SRCS)
-	mkdir -p $(BUILD_DIR)
-	$(NVCC) $(NVCCFLAGS) -I$(INC_DIR) $(SRCS) -o $(BUILD_DIR)/$(TARGET)
-	@echo "Standard build done: $(BUILD_DIR)/$(TARGET)"
+ORIG_SRCS := src/main.cu \
+             kernels/memory_kernels.cu \
+             kernels/matmul_kernels.cu
 
-optimized: $(OPT_SRCS)
-	mkdir -p $(OPT_BUILD)
-	$(NVCC) $(NVCCFLAGS) $(OPT_FLAGS) -I$(OPT_DIR) $(OPT_SRCS) -o $(OPT_BUILD)/$(OPT_TARGET)
-	@echo "Optimized build done: $(OPT_BUILD)/$(OPT_TARGET)"
+ORIG_HEADERS := include/kernels.cuh \
+                include/utils.cuh
 
-run: build
-	./$(BUILD_DIR)/$(TARGET)
+ORIG_RESULTS := results
 
-run-opt: optimized
-	./$(OPT_BUILD)/$(OPT_TARGET)
+# ─────────────────────────────────────────────────────────────────────────────
+#  Optimized build (Tensor Core version)
+# ─────────────────────────────────────────────────────────────────────────────
 
-profile: optimized
-	sudo env PATH=/usr/local/cuda-12.6/bin:$$PATH $(NCU) --set full -f -o report_clean ./$(OPT_BUILD)/$(OPT_TARGET)
+OPT_TARGET := build/optimized/cuda_bench
 
-profile-nsys: optimized
-	sudo env PATH=/usr/local/cuda-12.6/bin:$$PATH nsys profile -f -o report ./$(OPT_BUILD)/$(OPT_TARGET)
+OPT_FLAGS := $(COMMON_FLAGS) \
+             -Iinclude
 
-clean:
-	rm -rf $(BUILD_DIR)
-	@echo "Cleaned."
+OPT_SRCS := Optimized/main.cu \
+            Optimized/memory_kernels.cu \
+            Optimized/matmul_kernels.cu \
+            Optimized/wmma_matmul_kernels.cu \
+			Optimized/kernels.cuh \
+			Optimized/utils.cuh
+
+OPT_HEADERS := include/kernels.cuh \
+               include/utils.cuh
+
+OPT_RESULTS := Optimized/results
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Targets
+# ─────────────────────────────────────────────────────────────────────────────
+
+.PHONY: all original optimized \
+        run run-original run-optimized \
+        plot bench compare \
+        clean clean-original clean-optimized \
+        nsys ncu dirs
+
+all: dirs original optimized
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Directories
+# ─────────────────────────────────────────────────────────────────────────────
+
+dirs:
+	@mkdir -p build
+	@mkdir -p build/optimized
+	@mkdir -p $(ORIG_RESULTS)
+	@mkdir -p $(OPT_RESULTS)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Build — Original
+# ─────────────────────────────────────────────────────────────────────────────
+
+original: $(ORIG_TARGET)
+
+$(ORIG_TARGET): $(ORIG_SRCS) $(ORIG_HEADERS)
+	$(NVCC) $(ORIG_FLAGS) $(ORIG_SRCS) -o $(ORIG_TARGET)
+	@echo "Built: $(ORIG_TARGET)"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Build — Optimized
+# ─────────────────────────────────────────────────────────────────────────────
+
+optimized: $(OPT_TARGET)
+
+$(OPT_TARGET): $(OPT_SRCS) $(OPT_HEADERS)
+	$(NVCC) $(OPT_FLAGS) $(OPT_SRCS) -o $(OPT_TARGET)
+	@echo "Built: $(OPT_TARGET)"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Run
+# ─────────────────────────────────────────────────────────────────────────────
+
+run: run-original run-optimized
+
+run-original: original
+	@echo "\n=== Running Original Benchmark ==="
+	./$(ORIG_TARGET) | tee $(ORIG_RESULTS)/run.log
+
+run-optimized: optimized
+	@echo "\n=== Running Optimized Tensor Core Benchmark ==="
+	./$(OPT_TARGET) | tee $(OPT_RESULTS)/run.log
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Plotting
+# ─────────────────────────────────────────────────────────────────────────────
+
+plot:
+	python3 scripts/plot_results.py \
+	    $(OPT_RESULTS)/benchmark_results.csv
+
+bench: run-optimized plot
+
+compare: run plot
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Profiling
+# ─────────────────────────────────────────────────────────────────────────────
+
+nsys: optimized
+	nsys profile \
+	    --trace=cuda,nvtx \
+	    --output=$(OPT_RESULTS)/report \
+	    ./$(OPT_TARGET)
+
+ncu: optimized
+	ncu --set full \
+	    --target-processes all \
+	    --export $(OPT_RESULTS)/report_full \
+	    ./$(OPT_TARGET)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Clean
+# ─────────────────────────────────────────────────────────────────────────────
+
+clean: clean-original clean-optimized
+
+clean-original:
+	rm -f $(ORIG_TARGET)
+	rm -f $(ORIG_RESULTS)/benchmark_results.csv
+	rm -f $(ORIG_RESULTS)/run.log
+	rm -f $(ORIG_RESULTS)/*.png
+
+clean-optimized:
+	rm -f $(OPT_TARGET)
+	rm -f $(OPT_RESULTS)/benchmark_results.csv
+	rm -f $(OPT_RESULTS)/run.log
+	rm -f $(OPT_RESULTS)/*.png
+	rm -f $(OPT_RESULTS)/report*
