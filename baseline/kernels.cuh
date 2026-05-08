@@ -22,9 +22,6 @@ __global__ void matmul_tiled(float *A, float *B, float *C, int n);
 // 3. TC basic (WMMA)    — 64×64 block tile, 1 frag/warp, single buffer
 __global__ void matmul_wmma(const __half *A, const __half *B, float *C, int n);
 
-// 4. TC optimised (WMMA)— 128×128 block tile, 2×4 warp tile,
-//                         double-buffered smem, bank-conflict padding
-__global__ void matmul_wmma_opt(const __half *A, const __half *B, float *C, int n);
 
 // ─────────────────────────────────────────────────────────────
 //  Helper: in-kernel fp32 → fp16 conversion

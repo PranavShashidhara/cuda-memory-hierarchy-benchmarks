@@ -22,25 +22,26 @@ COMMON_FLAGS := -arch=sm_87 \
 #  Original build
 # ─────────────────────────────────────────────────────────────────────────────
 
-ORIG_TARGET := cuda_bench
+ORIG_TARGET := build/cuda_bench
 
 ORIG_FLAGS := $(COMMON_FLAGS) \
               -Iinclude
 
-ORIG_SRCS := src/main.cu \
-             kernels/memory_kernels.cu \
-             kernels/matmul_kernels.cu
+ORIG_SRCS := baseline/main.cu \
+             baseline/memory_kernels.cu \
+             baseline/matmul_kernels.cu \
+             baseline/wmma_matmul_kernels.cu
 
-ORIG_HEADERS := include/kernels.cuh \
-                include/utils.cuh
+ORIG_HEADERS := baseline/kernels.cuh \
+                baseline/utils.cuh
 
-ORIG_RESULTS := results
+ORIG_RESULTS := baseline
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Optimized build (Tensor Core version)
 # ─────────────────────────────────────────────────────────────────────────────
 
-OPT_TARGET := build/optimized/cuda_bench
+OPT_TARGET := build/cuda_bench_optimized
 
 OPT_FLAGS := $(COMMON_FLAGS) \
              -Iinclude
@@ -48,12 +49,10 @@ OPT_FLAGS := $(COMMON_FLAGS) \
 OPT_SRCS := Optimized/main.cu \
             Optimized/memory_kernels.cu \
             Optimized/matmul_kernels.cu \
-            Optimized/wmma_matmul_kernels.cu \
-			Optimized/kernels.cuh \
-			Optimized/utils.cuh
+            Optimized/wmma_matmul_kernels.cu 
 
-OPT_HEADERS := include/kernels.cuh \
-               include/utils.cuh
+OPT_HEADERS := Optimized/kernels.cuh \
+               Optimized/utils.cuh
 
 OPT_RESULTS := Optimized/results
 
@@ -118,8 +117,7 @@ run-optimized: optimized
 # ─────────────────────────────────────────────────────────────────────────────
 
 plot:
-	python3 scripts/plot_results.py \
-	    $(OPT_RESULTS)/benchmark_results.csv
+	python3 plot_results.py 
 
 bench: run-optimized plot
 

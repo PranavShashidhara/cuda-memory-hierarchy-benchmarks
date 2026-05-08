@@ -13,11 +13,10 @@
 //      2. Tiled fp32 v1       (shared mem, bank-conflict-free +1 pad)
 //      3. Tiled fp32 v2       (thread coarsening, WPT=4 register blocking)
 //      4. Tiled fp32 v3       (cp.async double-buffer + register blocking)
-//      5. TC WMMA basic       (fp16→fp32, 64×64 block tile, single-buffer)
-//      6. TC WMMA optimised   (fp16→fp32, 128×128 block tile, double-buffer,
+//      5. TC WMMA optimised   (fp16→fp32, 128×128 block tile, double-buffer,
 //                              +8-half smem padding, 8 MMA frags/warp)
 //
-// CSV output  →  results/benchmark_results.csv  (consumed by plot_results.py)
+// CSV output  →  Optimized/results/benchmark_results.csv  (consumed by plot_results.py)
 
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
@@ -38,7 +37,7 @@
 // ─── Hardware reference values (Jetson Orin Nano 8 GB) ────────────────────────
 #define PEAK_MEM_BW  51.2f      // GB/s  (LPDDR5)
 #define PEAK_FP32    1600.0f    // GFLOPS
-#define PEAK_TC_FP16 40000.0f   // GFLOPS (fp16 accumulate, from spec sheet)
+#define PEAK_TC_FP16 5200.0f   // GFLOPS (fp16 accumulate, from spec sheet)
 
 // ─── Global CSV handle ────────────────────────────────────────────────────────
 static FILE *g_csv = nullptr;
@@ -282,9 +281,6 @@ static void run_matmul()
     // fp32 v2 / v3 (8×8 blocks, RTS=TILE_DIM/WPT)
     dim3 blk_v2(RTS, RTS),   grd_v2(n/TILE_DIM, n/TILE_DIM);
 
-    // TC basic: 512 threads/block (16 warps), grid = (n/64)×(n/64)
-    const int BM_B = 64, BN_B = 64;
-    dim3 blk_tc_b(512),            grd_tc_b(n/BN_B, n/BM_B);
     // TC optimised: 256 threads/block (8 warps), grid = (n/128)×(n/128)
     const int BM_O = 128, BN_O = 128;
     dim3 blk_tc_o(256),            grd_tc_o(n/BN_O, n/BM_O);
@@ -318,10 +314,6 @@ static void run_matmul()
     // ── Tensor Core kernels ───────────────────────────────────────────────────
     printf("\n  -- Tensor Core (fp16 input, fp32 accumulate) --\n");
 
-    float t_tc_b  = bench_tc  ("TC WMMA basic  (64×64, 1 frag/warp)",
-                                matmul_wmma, d_a16, d_b16, d_c,
-                                grd_tc_b, blk_tc_b, n, t_naive);
-
     float t_tc_o  = bench_tc  ("TC WMMA opt    (128×128, dbl-buf, pad)",
                                 matmul_wmma_opt, d_a16, d_b16, d_c,
                                 grd_tc_o, blk_tc_o, n, t_naive);
@@ -331,8 +323,6 @@ static void run_matmul()
     printf("  %-36s  %.2f×\n", "Tiled v1",               t_naive / t_tiled);
     printf("  %-36s  %.2f×\n", "Tiled v2 (WPT=4)",       t_naive / t_v2);
     printf("  %-36s  %.2f×\n", "Tiled v3 (cp.async)",    t_naive / t_v3);
-    printf("  %-36s  %.2f×  ← Tensor Core basic\n",
-           "TC WMMA basic",  t_naive / t_tc_b);
     printf("  %-36s  %.2f×  ← Tensor Core optimised\n",
            "TC WMMA optimised", t_naive / t_tc_o);
     printf("\n  TC optimised vs best fp32 (v3):  %.2f×\n",
@@ -345,7 +335,6 @@ static void run_matmul()
     csv_write_matmul("tiled",        n, t_tiled, gf(t_tiled));
     csv_write_matmul("tiled_v2",     n, t_v2,    gf(t_v2));
     csv_write_matmul("tiled_v3",     n, t_v3,    gf(t_v3));
-    csv_write_matmul("tc_basic",     n, t_tc_b,  gf(t_tc_b));
     csv_write_matmul("tc_optimized", n, t_tc_o,  gf(t_tc_o));
 
     // ── Cleanup ───────────────────────────────────────────────────────────────
@@ -378,7 +367,7 @@ int main()
 
     // ── Open CSV ──────────────────────────────────────────────────────────────
     mkdir("results", 0755);
-    g_csv = fopen("results/benchmark_results.csv", "w");
+    g_csv = fopen("Optimized/results/benchmark_results.csv", "w");
     if (g_csv) {
         fprintf(g_csv, "benchmark,variant,n_or_size,avg_ms,metric_value\n");
         printf("\nCSV output → results/benchmark_results.csv\n");

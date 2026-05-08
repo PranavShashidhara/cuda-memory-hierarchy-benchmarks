@@ -5,7 +5,6 @@
 // Matmul ladder:
 //   Naive (fp32, global)  →  Tiled (fp32, shared)
 //   →  TC Basic (fp16, WMMA 64×64)
-//   →  TC Optimized (fp16, WMMA 128×128, double-buf, 2×4 warp tile)
 
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
@@ -17,7 +16,7 @@
 #include "utils.cuh"
 
 #define RUNS      10
-#define CSV_PATH  "results/benchmark_results.csv"
+#define CSV_PATH  "baseline/results/benchmark_results.csv"
 
 // ─────────────────────────────────────────────────────────────
 //  CSV handle
@@ -194,7 +193,7 @@ static float time_kernel(LaunchFn launch, cudaEvent_t s, cudaEvent_t e)
 
 // ─────────────────────────────────────────────────────────────
 //  Matrix multiply  (Phases 1/2/5)
-//  Four-step ladder: naive → tiled → TC basic → TC optimized
+//  Four-step ladder: naive → tiled → TC basic 
 // ─────────────────────────────────────────────────────────────
 void run_matmul()
 {
@@ -220,11 +219,10 @@ void run_matmul()
 
     // ── Device fp16 ────────────────────────────────────────────
     __half *d_ah, *d_bh;
-    float  *d_ch_basic, *d_ch_opt;
+    float  *d_ch_basic;
     CHECK(cudaMalloc(&d_ah,      sz16));
     CHECK(cudaMalloc(&d_bh,      sz16));
     CHECK(cudaMalloc(&d_ch_basic, sz32));
-    CHECK(cudaMalloc(&d_ch_opt,   sz32));
     convert_to_half(d_af, d_ah, n);
     convert_to_half(d_bf, d_bh, n);
     cudaDeviceSynchronize();
@@ -238,10 +236,6 @@ void run_matmul()
     dim3 blkTCB(512);
     dim3 grdTCB((n+63)/64, (n+63)/64);
 
-    // TC Optimized: 256 threads (8 warps, 4×2 layout), 128×128 block tile
-    dim3 blkTCO(256);
-    dim3 grdTCO((n+127)/128, (n+127)/128);
-
     cudaEvent_t s, e;
     cudaEventCreate(&s); cudaEventCreate(&e);
 
@@ -249,7 +243,6 @@ void run_matmul()
     float avg_naive = time_kernel([&]{ matmul_naive<<<grd16, blk16>>>(d_af, d_bf, d_cf, n); }, s, e);
     float avg_tiled = time_kernel([&]{ matmul_tiled<<<grd16, blk16>>>(d_af, d_bf, d_cf, n); }, s, e);
     float avg_tcb   = time_kernel([&]{ matmul_wmma    <<<grdTCB, blkTCB>>>(d_ah, d_bh, d_ch_basic, n); }, s, e);
-    float avg_tco   = time_kernel([&]{ matmul_wmma_opt<<<grdTCO, blkTCO>>>(d_ah, d_bh, d_ch_opt,   n); }, s, e);
 
     // ── GFLOPS: 2×n³ ──────────────────────────────────────────
     double flops = 2.0 * (double)n * n * n;
@@ -262,26 +255,21 @@ void run_matmul()
     printf("  %-34s  %8.3f ms  %8.2f GFLOPS\n", "1. Naive  (fp32, global)",          avg_naive, gf(avg_naive));
     printf("  %-34s  %8.3f ms  %8.2f GFLOPS\n", "2. Tiled  (fp32, shared 32×32)",    avg_tiled, gf(avg_tiled));
     printf("  %-34s  %8.3f ms  %8.2f GFLOPS\n", "3. TC Basic  (fp16, WMMA 64×64)",   avg_tcb,   gf(avg_tcb));
-    printf("  %-34s  %8.3f ms  %8.2f GFLOPS\n", "4. TC Optimized (fp16, WMMA opt)", avg_tco,   gf(avg_tco));
 
     printf("\n  --- Speedups vs Naive ---\n");
     printf("  Tiled        : %.2fx\n", avg_naive / avg_tiled);
     printf("  TC Basic     : %.2fx\n", avg_naive / avg_tcb);
-    printf("  TC Optimized : %.2fx\n", avg_naive / avg_tco);
-    printf("\n  --- Speedups vs TC Basic ---\n");
-    printf("  TC Optimized : %.2fx\n", avg_tcb / avg_tco);
+
 
     // ── CSV ────────────────────────────────────────────────────
     csv_write("matmul", "naive",        (long long)n, avg_naive, gf(avg_naive), "GFLOPS");
     csv_write("matmul", "tiled",        (long long)n, avg_tiled, gf(avg_tiled), "GFLOPS");
     csv_write("matmul", "tc_basic",     (long long)n, avg_tcb,   gf(avg_tcb),   "GFLOPS");
-    csv_write("matmul", "tc_optimized", (long long)n, avg_tco,   gf(avg_tco),   "GFLOPS");
 
     // ── Cleanup ────────────────────────────────────────────────
     cudaEventDestroy(s); cudaEventDestroy(e);
     cudaFree(d_af); cudaFree(d_bf); cudaFree(d_cf);
     cudaFree(d_ah); cudaFree(d_bh);
-    cudaFree(d_ch_basic); cudaFree(d_ch_opt);
     free(h_a); free(h_b);
 }
 
@@ -314,11 +302,6 @@ void print_summary()
     printf("  3. TC Basic: WMMA 16×16×16 MMA instructions on Tensor Cores.\n");
     printf("             fp16 halves the bandwidth pressure vs fp32.\n");
     printf("             64×64 block tile; 1 fragment/warp.\n");
-    printf("  4. TC Optimized: 128×128 block tile (4× more output/CTA).\n");
-    printf("             2×4 warp tile (8 MMA ops/warp/step).\n");
-    printf("             Double-buffered smem hides load latency.\n");
-    printf("             smem bank-conflict padding (+8 halves/row).\n");
-    printf("             Peak Tensor Core utilization on Orin Nano.\n");
     printf("\n");
     printf("  CSV results : %s\n", CSV_PATH);
     printf("  Run plots   : python3 scripts/plot_results.py\n\n");

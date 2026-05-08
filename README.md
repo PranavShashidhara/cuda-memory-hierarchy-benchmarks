@@ -4,139 +4,93 @@ A CUDA-based microbenchmarking framework for analyzing **GPU memory hierarchy be
 
 ## Overview
 
-This project is a **systems-level CUDA benchmarking suite** designed to study how GPU kernel design decisions impact performance at the hardware level.
+This project is a **systems-level CUDA benchmarking suite** designed to study how GPU kernel design decisions impact performance at the hardware level. It isolates **core GPU execution behavior** without model or inference dependencies.
 
-It focuses on:
+**Key focuses:**
 - Memory hierarchy behavior (global, cache, shared memory)
 - Kernel optimization techniques (naive vs tiled implementations)
 - Access pattern sensitivity (sequential, strided, random)
 - Compute vs memory-bound workload characterization
 
-Unlike ML-focused GPU projects, this framework isolates **core GPU execution behavior** without model or inference dependencies.
+## ⚠️ Important: Run Setup First
 
-## Objectives
+Before running any make commands, you **must** initialize the repository structure:
 
-- Analyze GPU memory hierarchy behavior under controlled kernels
-- Quantify performance differences between naive and optimized kernels
-- Demonstrate impact of **shared memory tiling** on matrix multiplication
-- Evaluate memory access patterns (coalesced vs non-coalesced)
-- Use profiling tools to identify performance bottlenecks
-
-## System Design Philosophy
-
-This project follows a **microbenchmark-driven systems methodology**:
-
-```
-Define kernel → isolate variable → measure performance → compare implementations
+```bash
+./setup.sh
 ```
 
-### Key Principles
+This creates all required directories (`baseline/`, `Optimized/`, `build/`, `results/`, etc.)
 
-- Pure CUDA kernel-level experimentation
-- No ML models or inference pipelines
-- Profiling-driven performance analysis
-- Controlled workload design
+## Quick Start
+
+```bash
+# 1. Setup directory structure (REQUIRED - do this first!)
+./setup.sh
+
+# 2. Build both baseline and optimized versions
+make all
+
+# 3. Run benchmarks and generate plots
+make bench
+```
+
+## Make Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `make all` | Build both baseline and optimized binaries |
+| `make original` | Build baseline version only |
+| `make optimized` | Build optimized version only |
+| `make run` | Run both baseline and optimized benchmarks |
+| `make run-original` | Run baseline benchmark, save results to `baseline/run.log` |
+| `make run-optimized` | Run optimized benchmark, save results to `Optimized/results/run.log` |
+| `make bench` | Run optimized benchmark + generate plots (recommended single command) |
+| `make plot` | Generate performance plots from CSV results |
+| `make compare` | Run all benchmarks and generate comparison plots |
+| `make nsys` | Profile optimized binary with Nsight Systems |
+| `make ncu` | Profile optimized binary with Nsight Compute |
+| `make clean` | Remove binaries and result files |
+
+## Workflow
+
+1. **Setup**: `./setup.sh` creates the directory structure
+2. **Build**: `make all` compiles baseline and optimized kernels
+3. **Run**: `make bench` executes benchmarks and generates plots
+4. **Results**: CSV files stored in `baseline/` and `Optimized/results/`, plots in respective directories
 
 ## Architecture
 
 ```
-Workload Definition (Synthetic Kernels)
+Synthetic Kernels (Memory, MatMul, Compute)
            ↓
     CUDA Kernel Layer (Naive vs Optimized)
            ↓
-    Execution on Jetson Orin Nano GPU
+    Execution on Jetson Orin Nano (sm_87)
            ↓
-    CUDA Event Timing / Nsight Profiling
+    CUDA Event Timing & Nsight Profiling
            ↓
-    Performance Metrics Collection
+    CSV Results → Python Visualization
            ↓
-    Comparative Analysis
+    Performance Analysis
 ```
 
 ## Core Components
 
-### 1. Memory Access Benchmark Suite
+### Memory Access Benchmarks
+- **Sequential Access**: Coalesced memory reads (best-case bandwidth)
+- **Strided Access**: Non-coalesced patterns (cache-inefficient)
+- **Random Access**: Cache-unfriendly patterns (latency stress)
 
-Evaluates GPU memory behavior under different access patterns:
-
-#### Sequential Access
-- Coalesced memory reads
-- Best-case bandwidth utilization
-
-#### Strided Access
-- Non-coalesced memory access
-- Simulates poor memory layouts
-
-#### Random Access
-- Cache-unfriendly pattern
-- Stress tests memory latency
-
-**Metrics collected:**
-- Memory bandwidth (GB/s)
-- Access latency
-- Cache efficiency
-
-### 2. Matrix Multiplication Kernels
-
-#### Naive Kernel
-- Direct global memory access
-- No reuse of loaded data
-- High DRAM traffic
-
-#### Tiled Kernel (Optimized)
-- Uses **shared memory blocking**
-- Reuses data within thread blocks
-- Reduces global memory transactions
-
-**Concept:**
-```
-Global Memory → Shared Memory Tile → Computation → Next Tile
-```
-
-**Metrics collected:**
-- Execution time
-- Speedup vs naive
-- Shared memory efficiency
-
-### 3. Compute vs Memory Bound Analysis
-
-**Kernels:**
-- Vector addition (memory-bound)
-- Matrix multiplication (compute-heavy)
-- Mixed workloads
-
-**Metrics collected:**
-- Arithmetic intensity
-- Occupancy
-- Bottleneck classification
-
-## Execution & Timing
-
-### Timing Method
-- CUDA Events API (primary timing mechanism)
-- Nsight Systems (system profiling)
-- Nsight Compute (kernel-level analysis)
+### Matrix Multiplication Kernels
+- **Naive**: Direct global memory access, high DRAM traffic
+- **Tiled (Optimized)**: Shared memory blocking, data reuse, reduced transactions
 
 ### Metrics Collected
-
 - Kernel execution time (ms)
-- Throughput (GB/s)
+- Memory bandwidth (GB/s)
+- Speedup vs baseline
 - Occupancy estimates
-- Memory transaction efficiency
-
-## Benchmarking Experiments
-
-### 1. Memory Scaling Tests
-Increase input size to observe bandwidth saturation.
-
-### 2. Access Pattern Sensitivity
-Compare sequential vs strided vs random access patterns.
-
-### 3. Kernel Optimization Comparison
-Naive vs tiled matrix multiplication performance.
-
-### 4. Compute Scaling Tests
-Increase matrix size to observe memory-bound → compute-bound transition.
 
 ## Expected Outcomes
 
@@ -154,27 +108,16 @@ Increase matrix size to observe memory-bound → compute-bound transition.
 - Edge GPUs (Jetson Orin Nano) exhibit different bottlenecks than datacenter GPUs
 - Profiling is essential for understanding true bottlenecks
 
-## Scope Constraints
+## Scope
 
-This project intentionally excludes:
+**Includes:**
+- CUDA kernel performance analysis
+- GPU architecture behavior characterization
+- Memory hierarchy studies
+- Kernel optimization techniques
+
+**Excludes:**
 - LLM inference systems
-- Transformer / KV-cache optimizations
-- Distributed GPU training
-- Model-level ML optimization
+- ML model training
+- Distributed GPU workloads
 - High-level application logic
-
-**Focus is strictly on:**
-> CUDA kernel performance + GPU architecture behavior
-
-## Future Work
-
-- Nsight Compute metric integration
-- Automatic kernel benchmarking engine
-- CSV export + Python visualization pipeline
-- Roofline model analysis
-- Tile size auto-tuning
-- Warp-level optimization studies
-
-## Summary
-
-A CUDA microbenchmark suite for analyzing **GPU memory hierarchy behavior and kernel optimization techniques** on Jetson Orin Nano using profiling-driven performance evaluation.
