@@ -197,20 +197,77 @@ bench-all: run-original run-optimized run-cutlass run-cublas plot
 compare: run plot
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Profiling (targets the optimized binary)
+#  Profiling
+#
+#  nsys targets   : nsys-original  nsys-optimized  nsys-cublas  nsys-cutlass
+#                   nsys-all
+#  ncu  targets   : ncu-original   ncu-optimized   ncu-cublas   ncu-cutlass
+#                   ncu-all
 # ─────────────────────────────────────────────────────────────────────────────
-nsys: optimized
-	nsys profile \
-	    --trace=cuda,nvtx \
-	    --output=$(OPT_RESULTS)/report \
+.PHONY: nsys nsys-original nsys-optimized nsys-cublas nsys-cutlass nsys-all \
+        ncu  ncu-original  ncu-optimized  ncu-cublas  ncu-cutlass  ncu-all
+
+# ── nsys ─────────────────────────────────────────────────────────────────────
+NSYS_FLAGS := --trace=cuda,nvtx
+
+nsys: nsys-optimized   # keep old default behaviour
+
+nsys-original: original
+	@echo "\n=== nsys: original ==="
+	nsys profile $(NSYS_FLAGS) \
+	    --output=$(ORIG_RESULTS)/nsys_report_original \
+	    ./$(ORIG_TARGET)
+
+nsys-optimized: optimized
+	@echo "\n=== nsys: optimized ==="
+	nsys profile $(NSYS_FLAGS) \
+	    --output=$(OPT_RESULTS)/nsys_report_optimized \
 	    ./$(OPT_TARGET)
 
-ncu: optimized
-	ncu --set full \
-	    --target-processes all \
-	    --export $(OPT_RESULTS)/report_full \
+nsys-cublas: cublas
+	@echo "\n=== nsys: cublas ==="
+	nsys profile $(NSYS_FLAGS) \
+	    --output=$(CUBLAS_RESULTS)/nsys_report_cublas \
+	    ./$(CUBLAS_TARGET)
+
+nsys-cutlass: cutlass
+	@echo "\n=== nsys: cutlass ==="
+	nsys profile $(NSYS_FLAGS) \
+	    --output=$(CUTLASS_RESULTS)/nsys_report_cutlass \
+	    ./$(CUTLASS_TARGET)
+
+nsys-all: nsys-original nsys-optimized nsys-cublas nsys-cutlass
+
+# ── ncu ──────────────────────────────────────────────────────────────────────
+NCU_FLAGS := --set full --target-processes all -f
+NCU      := sudo /usr/local/cuda-12.6/bin/ncu
+
+ncu: ncu-optimized     # keep old default behaviour
+
+ncu-original: original
+	@echo "\n=== ncu: original ==="
+	$(NCU) $(NCU_FLAGS) \
+	    --export $(ORIG_RESULTS)/ncu_report_full_original \
+	    ./$(ORIG_TARGET)
+
+ncu-optimized: optimized
+	@echo "\n=== ncu: optimized ==="
+	$(NCU) $(NCU_FLAGS) \
+	    --export $(OPT_RESULTS)/ncu_report_full_optimized \
 	    ./$(OPT_TARGET)
 
+ncu-cublas: cublas
+	@echo "\n=== ncu: cublas ==="
+	$(NCU) $(NCU_FLAGS) \
+	    --export $(CUBLAS_RESULTS)/ncu_report_full_cublas \
+	    ./$(CUBLAS_TARGET)
+
+ncu-cutlass: cutlass
+	@echo "\n=== ncu: cutlass ==="
+	$(NCU) $(NCU_FLAGS) \
+	    --export $(CUTLASS_RESULTS)/ncu_report_full_cutlass \
+	    ./$(CUTLASS_TARGET)
+ncu-all: ncu-original ncu-optimized ncu-cublas ncu-cutlass
 # ─────────────────────────────────────────────────────────────────────────────
 #  Clean
 # ─────────────────────────────────────────────────────────────────────────────
