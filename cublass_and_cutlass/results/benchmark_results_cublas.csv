@@ -1,0 +1,3 @@
+benchmark,variant,n_or_size,avg_ms,metric_value,metric_unit
+matmul,cublas_sgemm,2048,14.462618,1187.880981,GFLOPS
+matmul,cublas_gemmex_fp16,2048,2.702506,6357.015137,GFLOPS

@@ -1,0 +1,22 @@
+benchmark,variant,n_or_size,avg_ms,metric_value,metric_unit
+memory,Sequential,65536,0.025654,20.436573,GB/s
+memory,Strided (x4),65536,0.021930,23.907778,GB/s
+memory,Random access,65536,0.060179,13.068171,GB/s
+memory,Sequential,262144,0.074240,28.248276,GB/s
+memory,Strided (x4),262144,0.043808,47.871437,GB/s
+memory,Random access,262144,0.438211,7.178566,GB/s
+memory,Sequential,1048576,0.292323,28.696348,GB/s
+memory,Strided (x4),1048576,0.231322,36.263836,GB/s
+memory,Random access,1048576,2.601837,4.836165,GB/s
+memory,Sequential,4194304,1.122400,29.895252,GB/s
+memory,Strided (x4),4194304,0.886128,37.866344,GB/s
+memory,Random access,4194304,5.748211,8.756053,GB/s
+memory,Sequential,16777216,4.298208,31.226435,GB/s
+memory,Strided (x4),16777216,1.702045,78.856750,GB/s
+memory,Random access,16777216,18.262316,11.024154,GB/s
+memory,Sequential,67108864,13.349726,40.215870,GB/s
+memory,Strided (x4),67108864,6.398407,83.906967,GB/s
+memory,Random access,67108864,239.517532,3.362202,GB/s
+matmul,naive,2048,109.486008,156.913834,GFLOPS
+matmul,tiled,2048,58.994324,291.212250,GFLOPS
+matmul,tc_basic,2048,28.868168,595.114624,GFLOPS

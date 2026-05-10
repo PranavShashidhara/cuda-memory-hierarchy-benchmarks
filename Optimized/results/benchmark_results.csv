@@ -1,0 +1,24 @@
+benchmark,variant,n_or_size,avg_ms,metric_value
+memory,Sequential,65536,988.7078,0.0005
+memory,Strided (x4),65536,961.1556,0.0005
+memory,Random access,65536,1022.9922,0.0008
+memory,Sequential,262144,1001.8394,0.0021
+memory,Strided (x4),262144,1000.4893,0.0021
+memory,Random access,262144,1225.4467,0.0026
+memory,Sequential,1048576,1034.6904,0.0081
+memory,Strided (x4),1048576,1017.5093,0.0082
+memory,Random access,1048576,1532.1116,0.0082
+memory,Sequential,4194304,1169.5074,0.0287
+memory,Strided (x4),4194304,1187.1509,0.0283
+memory,Random access,4194304,2640.2612,0.0191
+memory,Sequential,16777216,1466.8209,0.0915
+memory,Strided (x4),16777216,1519.4958,0.0883
+memory,Random access,16777216,7144.1382,0.0282
+memory,Sequential,67108864,2237.6206,0.2399
+memory,Strided (x4),67108864,2314.2671,0.2320
+memory,Random access,67108864,31159.3184,0.0258
+matmul,naive,2048,36834.5117,0.4664
+matmul,tiled,2048,24968.8555,0.6881
+matmul,tiled_v2,2048,4497.9521,3.8195
+matmul,tiled_v3,2048,4458.4746,3.8533
+matmul,tc_optimized,2048,2599.3481,6.6093

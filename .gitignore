@@ -46,5 +46,4 @@ Thumbs.db
 # Linux temporary files
 # =========================
 *~build/
-results/
 build/
