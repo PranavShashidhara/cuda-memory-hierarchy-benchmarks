@@ -8,7 +8,7 @@ A systems-level CUDA microbenchmarking framework for studying **GPU memory hiera
 
 | Finding | Detail |
 |---------|--------|
-| All hand-written kernels are **memory-bound** | Arithmetic intensity never reaches the fp32 compute roofline — shared memory tiling helps but does not cross the ridge point |
+| All evaluated hand-written kernels are **memory-bound** | Arithmetic intensity never reaches the fp32 compute roofline — shared memory tiling helps but does not cross the ridge point |
 | Register tiling (WPT=4) gave the largest fp32 gain | **5.65×** over naive; `cp.async` pipelining adds negligible gain at this problem size |
 | Tensor Cores shift the bottleneck but don't eliminate it | Hand-written TC WMMA: **10.4×** over naive; still memory-bound |
 | Library fp32 kernels cross the ridge point | cuBLAS Sgemm and CUTLASS fp32 SIMT operate in the **compute-bound** regime — hand-written kernels do not |
@@ -138,7 +138,7 @@ One representative kernel per category was profiled with NCU to locate each on t
 
 ### Memory-bound — Hand-Written Kernels
 
-All custom kernels (naive through TC WMMA) sit **left of the ridge point**. Shared memory tiling increases arithmetic intensity substantially vs naive, but the best hand-written fp32 kernel (tiled v2, 968 GFLOPS) remains bandwidth-limited — the ridge point is never crossed.
+All evaluated custom kernels (naive through TC WMMA) sit **left of the ridge point**. Shared memory tiling increases arithmetic intensity substantially vs naive, but the best hand-written fp32 kernel (tiled v2, 968 GFLOPS) remains bandwidth-limited — the ridge point is never crossed.
 
 ![NCU Roofline — Tiled fp32](artifacts/ncu_matmul_tiled.png)
 *Tiled fp32: below the compute roofline, bound by L2/DRAM bandwidth*
